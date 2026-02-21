@@ -12,16 +12,15 @@ dotenv.config();
 
 const app = express();
 
-// Add this line RIGHT HERE ⬇️
-app.set('trust proxy', 1); // Trust first proxy (Render/Railway)
-
+// Trust proxy (for Render/Railway)
+app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet({
     contentSecurityPolicy: false,
 }));
 
-// CORS configuration - more permissive for development
+// CORS configuration
 const corsOptions = {
     origin: function (origin, callback) {
         const allowedOrigins = [
@@ -29,7 +28,7 @@ const corsOptions = {
             'http://127.0.0.1:5500',
             'http://localhost:5500',
             'https://midnight-backend-production.up.railway.app',
-            'https://midnight-8lgk.onrender.com',  // ✅ Your frontend on Render
+            'https://midnight-8lgk.onrender.com',
             process.env.FRONTEND_URL
         ].filter(Boolean);
         
@@ -64,7 +63,6 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // ============= IN-MEMORY STORAGE FALLBACK =============
-// Use this if MongoDB is not available
 const inMemoryDB = {
     wishlist: [],
     get count() { return this.wishlist.length; },
@@ -91,7 +89,7 @@ if (process.env.MONGODB_URI) {
     mongoose.connect(process.env.MONGODB_URI, {
         useNewUrlParser: true,
         useUnifiedTopology: true,
-        serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+        serverSelectionTimeoutMS: 5000,
     })
     .then(() => {
         console.log('✅ MongoDB connected successfully');
@@ -99,7 +97,7 @@ if (process.env.MONGODB_URI) {
     })
     .catch(err => {
         console.log('❌ MongoDB connection error:', err.message);
-        console.log('⚠️  Falling back to in-memory storage');
+        console.log('⚠️ Falling back to in-memory storage');
         useMemoryDB = true;
     });
 
@@ -115,7 +113,7 @@ if (process.env.MONGODB_URI) {
 
     Wishlist = mongoose.model('Wishlist', wishlistSchema);
 } else {
-    console.log('⚠️  MONGODB_URI not found, using in-memory storage');
+    console.log('⚠️ MONGODB_URI not found, using in-memory storage');
     useMemoryDB = true;
 }
 
@@ -123,32 +121,47 @@ if (process.env.MONGODB_URI) {
 let transporter = null;
 
 if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-    transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST,
-        port: parseInt(process.env.EMAIL_PORT) || 587,
-        secure: process.env.EMAIL_PORT === '465',
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-        },
-        tls: {
-            rejectUnauthorized: false // Allow self-signed certificates
-        },
-        connectionTimeout: 5000,
-        greetingTimeout: 5000,
-        socketTimeout: 5000
-    });
-
-    // Verify email connection (don't await, just log)
-    transporter.verify()
-        .then(() => console.log('✅ Email server is ready'))
-        .catch(err => {
-            console.log('❌ Email server error:', err.message);
-            console.log('⚠️  Continuing without email functionality');
-            transporter = null;
+    try {
+        console.log('📧 Setting up email with:', process.env.EMAIL_USER);
+        
+        transporter = nodemailer.createTransport({
+            host: process.env.EMAIL_HOST,
+            port: parseInt(process.env.EMAIL_PORT) || 587,
+            secure: process.env.EMAIL_PORT === '465',
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS,
+            },
+            tls: {
+                rejectUnauthorized: false,
+                ciphers: 'SSLv3'
+            },
+            connectionTimeout: 10000,      // 10 seconds
+            greetingTimeout: 10000,         // 10 seconds
+            socketTimeout: 10000            // 10 seconds
         });
+
+        // Verify connection but DON'T block app startup
+        transporter.verify()
+            .then(() => {
+                console.log('✅ Email server is ready');
+                console.log(`📧 Sending from: ${process.env.EMAIL_USER}`);
+                console.log(`📧 Admin email: ${process.env.ADMIN_EMAIL || process.env.EMAIL_USER}`);
+            })
+            .catch(err => {
+                console.log('❌ Email server error:', err.message);
+                console.log('⚠️ Continuing without email functionality - app will still work!');
+                transporter = null;
+            });
+            
+    } catch (err) {
+        console.log('❌ Email setup error:', err.message);
+        console.log('⚠️ Continuing without email functionality - app will still work!');
+        transporter = null;
+    }
 } else {
-    console.log('⚠️  Email credentials not found, continuing without email functionality');
+    console.log('⚠️ Email credentials not found, continuing without email functionality');
+    console.log('📧 To enable emails, set: EMAIL_HOST, EMAIL_USER, EMAIL_PASS');
 }
 
 // Helper function to save to wishlist
@@ -212,7 +225,6 @@ const validateWishlist = [
         .notEmpty()
         .withMessage('Contact is required')
         .custom(value => {
-            // Check if it's email or phone
             const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
             const isPhone = /^[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}$/.test(value);
             return isEmail || isPhone;
@@ -322,9 +334,9 @@ app.post('/api/wishlist', validateWishlist, async (req, res) => {
             };
 
             // Send admin email
-            transporter.sendMail(adminMailOptions).catch(err => 
-                console.log('Admin email error:', err.message)
-            );
+            transporter.sendMail(adminMailOptions)
+                .then(info => console.log('✅ Admin email sent:', info.messageId))
+                .catch(err => console.log('❌ Admin email error:', err.message));
 
             // Send confirmation email to user if it's an email
             if (contact.includes('@')) {
@@ -368,10 +380,12 @@ app.post('/api/wishlist', validateWishlist, async (req, res) => {
                     `
                 };
 
-                transporter.sendMail(userMailOptions).catch(err => 
-                    console.log('User email error:', err.message)
-                );
+                transporter.sendMail(userMailOptions)
+                    .then(info => console.log('✅ User email sent to:', contact))
+                    .catch(err => console.log('❌ User email error:', err.message));
             }
+        } else {
+            console.log('📧 Email disabled - wishlist saved without email notification');
         }
 
         // Return success response
@@ -382,7 +396,8 @@ app.post('/api/wishlist', validateWishlist, async (req, res) => {
                 name,
                 contact: contact.includes('@') ? 'email' : 'phone',
                 position: totalCount,
-                storage: useMemoryDB ? 'memory' : 'mongodb'
+                storage: useMemoryDB ? 'memory' : 'mongodb',
+                emailSent: transporter ? (contact.includes('@') ? true : false) : false
             }
         });
 
@@ -460,11 +475,26 @@ process.on('SIGTERM', () => {
     console.log('SIGTERM signal received: closing HTTP server');
     server.close(() => {
         console.log('HTTP server closed');
-        mongoose.connection.close(false, () => {
-            console.log('MongoDB connection closed');
+        if (mongoose.connection) {
+            mongoose.connection.close(false, () => {
+                console.log('MongoDB connection closed');
+                process.exit(0);
+            });
+        } else {
             process.exit(0);
-        });
+        }
     });
+});
+
+// Handle uncaught exceptions (prevent crashes)
+process.on('uncaughtException', (err) => {
+    console.log('⚠️ Uncaught Exception:', err.message);
+    console.log('⚠️ App continues running...');
+});
+
+process.on('unhandledRejection', (err) => {
+    console.log('⚠️ Unhandled Rejection:', err.message);
+    console.log('⚠️ App continues running...');
 });
 
 module.exports = app;
