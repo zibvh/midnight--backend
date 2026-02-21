@@ -12,6 +12,10 @@ dotenv.config();
 
 const app = express();
 
+// Add this line RIGHT HERE ⬇️
+app.set('trust proxy', 1); // Trust first proxy (Render/Railway)
+
+
 // Security middleware
 app.use(helmet({
     contentSecurityPolicy: false,
