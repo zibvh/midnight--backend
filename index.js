@@ -40,7 +40,6 @@ const limiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req) => {
-        // FIX #2: Better IP detection for Railway
         return req.headers['x-forwarded-for'] || req.ip || req.connection.remoteAddress;
     }
 });
@@ -64,24 +63,19 @@ const wishlistSchema = new mongoose.Schema({
 
 const Wishlist = mongoose.model('Wishlist', wishlistSchema);
 
-// Email configuration with better timeout handling
+// Email configuration
 let transporter;
 try {
     transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port: parseInt(process.env.EMAIL_PORT) || 587,
-        secure: false, // false for port 587
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
         auth: {
             user: process.env.EMAIL_USER,
             pass: process.env.EMAIL_PASS,
         },
-        tls: {
-            rejectUnauthorized: false,
-            ciphers: 'SSLv3'
-        },
-        connectionTimeout: 30000, // 30 seconds
+        connectionTimeout: 30000,
         socketTimeout: 30000,
-        debug: true // Enable debug logs
     });
 
     // Verify email connection
@@ -155,7 +149,7 @@ app.post('/api/wishlist', validateWishlist, async (req, res) => {
         }
 
         const { name, contact, confirmed } = req.body;
-        
+
         const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         const userAgent = req.headers['user-agent'];
 
@@ -166,25 +160,23 @@ app.post('/api/wishlist', validateWishlist, async (req, res) => {
             ipAddress,
             userAgent
         });
-        
+
         await wishlistEntry.save();
         console.log(`✅ New wishlist entry: ${name} - ${contact}`);
 
-        // Send emails if transporter exists (don't await - fire and forget)
+        // Send emails if transporter exists
         if (transporter) {
-            // Send admin notification
             const adminMailOptions = {
                 from: `"Midnight App" <${process.env.EMAIL_USER}>`,
                 to: process.env.ADMIN_EMAIL,
                 subject: '🎉 New Midnight Wishlist Signup!',
                 html: `<div>New signup: ${name} - ${contact}</div>`
             };
-            
+
             transporter.sendMail(adminMailOptions).catch(err => 
                 console.log('Admin email error:', err.message)
             );
 
-            // Send to user if email
             if (contact.includes('@')) {
                 const userMailOptions = {
                     from: `"Midnight" <${process.env.EMAIL_USER}>`,
@@ -192,7 +184,7 @@ app.post('/api/wishlist', validateWishlist, async (req, res) => {
                     subject: '✅ You\'re on the Midnight wishlist!',
                     html: `<div>Thanks ${name}! You're on the wishlist!</div>`
                 };
-                
+
                 transporter.sendMail(userMailOptions).catch(err => 
                     console.log('User email error:', err.message)
                 );
@@ -225,7 +217,7 @@ app.get('/api/stats', async (req, res) => {
         const today = await Wishlist.countDocuments({
             createdAt: { $gte: new Date().setHours(0, 0, 0, 0) }
         });
-        
+
         res.json({
             success: true,
             data: {
